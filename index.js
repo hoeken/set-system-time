@@ -50,6 +50,12 @@ module.exports = function (app) {
   }
 
   plugin.start = function (options) {
+
+    const { find } = require('geo-tz')
+    tzinfo = find(47.650499, -122.350070)  // ['America/Los_Angeles']
+    
+    app.debug(tzinfo)
+
     let stream = app.streambundle.getSelfStream('navigation.datetime')
     if (options && options.interval > 0) {
       stream = stream.debounceImmediate(options.interval * 1000)
