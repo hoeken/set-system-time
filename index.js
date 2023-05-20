@@ -109,7 +109,8 @@ module.exports = function (app) {
       subscribe: [
         {
           path: 'navigation.position',
-          period: 36000
+          minPeriod: 600000,
+          policy: 'instant'
         }
       ]
     }
