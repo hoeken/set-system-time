@@ -10,6 +10,10 @@ module.exports = function (app) {
       console.log(msg)
     })
 
+  const { find } = require('geo-tz')
+
+  const fs = require('fs');
+
   var plugin = {
     unsubscribes: []
   }
@@ -51,11 +55,6 @@ module.exports = function (app) {
 
   plugin.start = function (options) {
 
-    const { find } = require('geo-tz')
-    tzinfo = find(47.650499, -122.350070)  // ['America/Los_Angeles']
-    
-    app.debug(tzinfo)
-
     let stream = app.streambundle.getSelfStream('navigation.datetime')
     if (options && options.interval > 0) {
       stream = stream.debounceImmediate(options.interval * 1000)
@@ -93,6 +92,108 @@ module.exports = function (app) {
           }
         }
       })
+    )
+    
+    //lookup our current timezone
+    try {
+      var current_timezone = fs.readFileSync('/etc/timezone', 'utf8');
+      current_timezone = current_timezone.trim();
+      app.debug("Current timezone: " + current_timezone);
+    } catch (err) {
+      app.error(err);
+    }
+    
+    //get our position update every 10 minutes
+    let localSubscription = {
+      context: 'vessels.self',
+      subscribe: [
+        {
+          path: 'navigation.position',
+          period: 36000
+        }
+      ]
+    }
+    
+    //loop through each update and look up the timezone
+    app.subscriptionmanager.subscribe(
+      localSubscription,
+      plugin.unsubscribes,
+      subscriptionError => {
+        app.error('Error:' + subscriptionError);
+      },
+      delta => {
+        delta.updates.forEach(u => {
+          
+          let lat = u.values[0].value.latitude
+          let lon = u.values[0].value.longitude
+
+          //look up our timezone
+          let tzinfo = find(lat, lon)
+          if (Array.isArray(tzinfo) && tzinfo.length > 0) {
+            timezone = tzinfo[0].toString()
+            app.debug("Timezone: "+ timezone)
+            let updates = {
+              updates: [
+                {
+                  values: [
+                    {
+                      path: 'navigation.timezone',
+                      value: timezone
+                    }
+                  ]
+                }
+              ]
+            }
+            app.handleMessage(plugin.id, updates)
+            
+            //has it changed?
+            if (timezone != current_timezone) {
+              app.debug("New timezone!")
+              
+              var command = `sudo timedatectl set-timezone ${timezone}`
+              app.debug(command)
+              var child
+              child = require('child_process').spawn('sh', ['-c', command])
+              child.on('exit', value => {
+                if (value === 0) {
+                  count++
+                  lastMessage = 'Timezone set to ' + timezone
+                  debug(lastMessage)
+                } else if (value === 3) {
+                  lastMessage =
+                    'Passwordless sudo not available, cannot set timezone'
+                  logError(lastMessage)
+                }
+              })
+              child.stderr.on('data', function (data) {
+                lastMessage = data.toString()
+                logError(lastMessage)
+              })
+              
+              command = "sudo /etc/init.d/cron restart"
+              app.debug(command)
+              child = require('child_process').spawn('sh', ['-c', command])
+              child.on('exit', value => {
+                if (value === 0) {
+                  count++
+                  lastMessage = 'Restarted cron'
+                  debug(lastMessage)
+                } else if (value === 3) {
+                  lastMessage =
+                    'Passwordless sudo not available, cannot restart cron'
+                  logError(lastMessage)
+                }
+              })
+              child.stderr.on('data', function (data) {
+                lastMessage = data.toString()
+                logError(lastMessage)
+              })          
+          
+              current_timezone = timezone
+            }
+          }
+        })
+      }
     )
   }
 
